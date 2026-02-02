@@ -27,6 +27,14 @@ class BibleBot(commands.Bot):
         """Called when bot is ready."""
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         
+        # Set bot status
+        activity = discord.Activity(
+            type=discord.ActivityType.watching,
+            name="📖 Delivering Daily Bible Verses"
+        )
+        await self.change_presence(activity=activity, status=discord.Status.online)
+        print(f'Status updated: {activity.name}')
+        
         # Start scheduler (now that event loop is running)
         from .scheduler import start_scheduler, load_all_schedules
         from .storage import load_users
