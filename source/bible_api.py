@@ -7,7 +7,13 @@ import random
 from typing import Dict, List, Optional
 
 API_KEY = os.getenv('API_BIBLE_KEY')
-API_ENDPOINT = os.getenv('API_BIBLE_ENDPOINT', 'https://api.bible')
+API_ENDPOINT = os.getenv('API_BIBLE_ENDPOINT', 'https://api.scripture.api.bible')
+
+# Debug: Check if API key is loaded
+if not API_KEY:
+    print("WARNING: API_BIBLE_KEY not found in environment variables!")
+else:
+    print(f"API.Bible API key loaded: {API_KEY[:5]}...{API_KEY[-5:]}")
 
 # Curated list of popular inspirational Bible verses
 # Format: "BOOK.CHAPTER.VERSE" or "BOOK.CHAPTER.VERSE-VERSE" for ranges
@@ -135,10 +141,20 @@ def get_random_verse(bible_version: str) -> Optional[Dict]:
         # Select random verse from curated list
         verse_id = random.choice(INSPIRATIONAL_VERSES)
         
-        # Fetch verse from API
+        # Try fetching the verse
         headers = {'api-key': API_KEY}
         url = f'{API_ENDPOINT}/v1/bibles/{bible_version}/verses/{verse_id}'
+        
+        # Try with 'text' content type first
         response = requests.get(url, headers=headers, timeout=10, params={'content-type': 'text'})
+        
+        # If it fails and it's a range, try fetching just the first verse
+        if response.status_code == 400 and '-' in verse_id:
+            # Extract just the first verse from the range
+            base_verse = verse_id.split('-')[0]
+            url = f'{API_ENDPOINT}/v1/bibles/{bible_version}/verses/{base_verse}'
+            response = requests.get(url, headers=headers, timeout=10, params={'content-type': 'text'})
+        
         response.raise_for_status()
         
         data = response.json()
@@ -151,7 +167,26 @@ def get_random_verse(bible_version: str) -> Optional[Dict]:
         }
     except Exception as e:
         print(f"Error fetching random verse: {e}")
-        return None
+        # Try one more time with a different verse
+        try:
+            # Pick a simple single verse (John 3:16)
+            fallback_verse_id = "JHN.3.16"
+            headers = {'api-key': API_KEY}
+            url = f'{API_ENDPOINT}/v1/bibles/{bible_version}/verses/{fallback_verse_id}'
+            response = requests.get(url, headers=headers, timeout=10, params={'content-type': 'text'})
+            response.raise_for_status()
+            
+            data = response.json()
+            verse_data = data.get('data', {})
+            
+            return {
+                'text': verse_data.get('content', ''),
+                'reference': verse_data.get('reference', ''),
+                'verse_id': fallback_verse_id
+            }
+        except Exception as fallback_error:
+            print(f"Fallback verse also failed: {fallback_error}")
+            return None
 
 def format_verse_reference(reference: str) -> str:
     """Formats verse references for display."""

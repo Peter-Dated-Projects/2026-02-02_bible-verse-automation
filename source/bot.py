@@ -142,6 +142,62 @@ async def list_versions(interaction: discord.Interaction):
         )
         await interaction.followup.send(embed=embed)
 
+@bot.tree.command(name="quote", description="Get a random inspirational Bible verse instantly")
+async def get_quote(interaction: discord.Interaction):
+    """Returns an instant random Bible verse."""
+    await interaction.response.defer()
+    
+    try:
+        # Get user's saved Bible version, or default to KJV
+        user_settings = get_user_settings(str(interaction.user.id))
+        
+        if user_settings and user_settings.get('bible_version'):
+            bible_version = user_settings.get('bible_version')
+        else:
+            # Default to King James Version
+            bible_version = 'de4e12af7f28f599-01'  # KJV
+        
+        # Get random verse
+        verse_data = get_random_verse(bible_version)
+        
+        if not verse_data:
+            embed = discord.Embed(
+                title="❌ Error",
+                description="Could not fetch verse. Please try again.",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed)
+            return
+        
+        # Create embed with gold border
+        embed = discord.Embed(
+            title=verse_data.get('text', ''),
+            description="",
+            color=discord.Color.gold()
+        )
+        embed.add_field(
+            name="Reference",
+            value=verse_data.get('reference', 'Unknown'),
+            inline=True
+        )
+        embed.add_field(
+            name="Version",
+            value=f"`{bible_version}`",
+            inline=True
+        )
+        embed.set_footer(text="Use /setup to configure daily verses 🙏")
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        print(f"Error in quote command: {e}")
+        embed = discord.Embed(
+            title="❌ Error",
+            description="An error occurred while fetching a verse.",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed)
+
 @bot.tree.command(name="setup", description="Configure your daily Bible verse delivery (interactive)")
 async def setup_verse(interaction: discord.Interaction):
     """Interactive multi-step setup for daily Bible verses."""
@@ -310,11 +366,11 @@ async def send_daily_verse(user_id: str):
             print(f"Could not find user {user_id}")
             return
         
-        # Create embed
+        # Create embed with gold border
         embed = discord.Embed(
-            title=f"📖 Daily Bible Verse",
-            description=verse_data.get('text', ''),
-            color=discord.Color.blue()
+            title=verse_data.get('text', ''),
+            description="",
+            color=discord.Color.gold()
         )
         embed.add_field(
             name="Reference",
