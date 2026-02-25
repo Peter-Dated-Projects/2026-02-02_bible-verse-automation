@@ -1,0 +1,12 @@
+{
+  "users": {
+    "343889571060383744": {
+      "bible_version": "de4e12af7f28f599-02",
+      "scheduled_time": "07:00",
+      "timezone": "America/New_York"
+    }
+  },
+  "greeted": {
+    "343889571060383744": true
+  }
+}

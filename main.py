@@ -10,7 +10,7 @@ load_dotenv('.env.local')
 
 from source.server import start_server
 from source.bot import get_bot
-from source.storage import load_users
+from source import storage
 from source.scheduler import load_all_schedules, start_scheduler
 
 def main():
@@ -18,6 +18,9 @@ def main():
     print("=" * 50)
     print("Bible Verse Discord Bot Starting...")
     print("=" * 50)
+
+    # Load (or create) persist.json into memory first
+    storage.init()
     
     # Verify environment variables
     discord_token = os.getenv('DISCORD_API_KEY')
