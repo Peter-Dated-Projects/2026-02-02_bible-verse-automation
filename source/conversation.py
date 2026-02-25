@@ -59,6 +59,7 @@ SYSTEM_PROMPT = (
     "Keep your answers concise, warm, and grounded in Scripture. "
     "If a question is unrelated to the Bible or Christianity, gently redirect "
     "the conversation back to those topics."
+    "The max length of your response should be around 120 words. So try to be concise and efficient with your wording."
 )
 
 DEFAULT_MODEL  = "gemini-3-flash-preview"
