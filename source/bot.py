@@ -18,7 +18,7 @@ from .storage import (
     mark_greeted,
 )
 from .scheduler import setup_user_schedule
-from .conversation import ConversationManager
+from .conversation import ConversationManager, log_quote, RateLimitError
 
 
 class BibleBot(commands.Bot):
@@ -249,6 +249,13 @@ async def get_quote(interaction: discord.Interaction):
         embed.set_footer(text="Use /setup to configure daily verses 🙏")
 
         await interaction.followup.send(embed=embed)
+        log_quote(
+            user_id=str(interaction.user.id),
+            text=verse_data.get("text", ""),
+            reference=verse_data.get("reference", ""),
+            version=bible_version,
+            source="quote",
+        )
 
     except Exception as e:
         print(f"Error in quote command: {e}")
@@ -447,6 +454,13 @@ async def send_daily_verse(user_id: str):
         try:
             await user.send(embed=embed)
             print(f"Sent daily verse to user {user_id}")
+            log_quote(
+                user_id=user_id,
+                text=verse_data.get("text", ""),
+                reference=verse_data.get("reference", ""),
+                version=bible_version,
+                source="daily",
+            )
         except discord.Forbidden:
             print(f"Cannot send DM to user {user_id} - DMs are disabled")
         except Exception as e:
@@ -534,10 +548,21 @@ async def chat_command(interaction: discord.Interaction, message: str):
 
         await interaction.followup.send(truncated)
 
+    except RateLimitError:
+        embed = discord.Embed(
+            title="⚠️ Out of API Credits",
+            description=(
+                "Both Gemini models are currently rate-limited or over quota. "
+                "Please try again in a little while."
+            ),
+            color=discord.Color.orange(),
+        )
+        await interaction.followup.send(embed=embed)
+
     except Exception as e:
         print(f"[chat_command] Error for user {interaction.user.id}: {e}")
         embed = discord.Embed(
-            title="\u274c Error",
+            title="❌ Error",
             description="Something went wrong while processing your message. Please try again.",
             color=discord.Color.red(),
         )

@@ -36,11 +36,14 @@ Usage
 
 import json
 import os
+import ssl
+import time
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 from google import genai
 from google.genai import types
+from google.genai import errors as genai_errors
 
 # ---------------------------------------------------------------------------
 # Paths & constants
@@ -58,8 +61,13 @@ SYSTEM_PROMPT = (
     "the conversation back to those topics."
 )
 
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL  = "gemini-3-flash-preview"
+FALLBACK_MODEL = "gemini-2.5-flash"      # used when primary is rate-limited
 MAX_HISTORY_MESSAGES = 40  # cap stored turns (20 user + 20 model)
+
+
+class RateLimitError(Exception):
+    """Raised when all available Gemini models are exhausted / rate-limited."""
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +145,54 @@ def get_message_count(user_id: str) -> int:
     """Return the number of stored messages for *user_id*."""
     record = load_chat(user_id)
     return len(record.get("messages", []))
+
+
+def log_quote(
+    user_id: str,
+    text: str,
+    reference: str,
+    version: str,
+    source: str = "quote",
+) -> None:
+    """
+    Append a delivered Bible verse to the user's chat history.
+
+    This does **not** call the LLM — it only persists context so the
+    assistant knows which verses have been sent when the user asks.
+
+    Parameters
+    ----------
+    user_id:
+        Discord user snowflake (str).
+    text:
+        The verse body text.
+    reference:
+        Human-readable reference, e.g. ``"John 3:16"``.
+    version:
+        Bible version ID or abbreviation, e.g. ``"KJV"``.
+    source:
+        ``"daily"`` for the scheduled delivery, ``"quote"`` for /quote.
+    """
+    record = load_chat(user_id)
+    messages: List[Dict] = record.setdefault("messages", [])
+
+    content = (
+        f"[Verse sent to user | source={source} | version={version}]\n"
+        f"{reference}\n"
+        f"{text}"
+    )
+    messages.append(
+        {
+            "role": "model",
+            "content": content,
+            "timestamp": _now_iso(),
+            "event_type": "verse_delivery",
+            "meta": {"reference": reference, "version": version, "source": source},
+        }
+    )
+    save_chat(record)
+    print(f"[conversation] Logged {source} verse for user {user_id}: {reference}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -220,16 +276,46 @@ class ConversationManager:
             max_output_tokens=1024,
         )
 
-        try:
-            response = self._client.models.generate_content(
-                model=self._model,
-                contents=contents,
-                config=config,
+        reply_text: Optional[str] = None
+        models_to_try = [self._model, FALLBACK_MODEL]
+
+        _RETRYABLE = (ssl.SSLError, ConnectionResetError, ConnectionError, OSError)
+        for model in models_to_try:
+            for attempt in range(1, 4):  # up to 3 attempts per model
+                try:
+                    response = self._client.models.generate_content(
+                        model=model,
+                        contents=contents,
+                        config=config,
+                    )
+                    reply_text = response.text or ""
+                    if model != self._model:
+                        print(f"[conversation] Used fallback model {model} for user {user_id}")
+                    break  # success
+                except _RETRYABLE as e:
+                    print(
+                        f"[conversation] Network error on {model} for user {user_id} "
+                        f"(attempt {attempt}/3): {e}"
+                    )
+                    if attempt < 3:
+                        time.sleep(2 * attempt)  # 2s, 4s back-off
+                    else:
+                        break  # give up on this model, try next
+                except genai_errors.ClientError as e:
+                    if e.code in (429, 503) or "quota" in str(e).lower() or "rate" in str(e).lower():
+                        print(f"[conversation] Rate limit on {model} for user {user_id}: {e}")
+                        break  # try next model
+                    raise  # other client error — propagate
+                except Exception as e:
+                    print(f"[conversation] Unexpected error on {model} for user {user_id}: {e}")
+                    raise
+            if reply_text is not None:
+                break  # a model succeeded
+
+        if reply_text is None:
+            raise RateLimitError(
+                "All Gemini models are currently rate-limited or over quota."
             )
-            reply_text: str = response.text or ""
-        except Exception as e:
-            print(f"[conversation] Gemini API error for user {user_id}: {e}")
-            raise
 
         # Append the model turn and persist
         messages.append(
