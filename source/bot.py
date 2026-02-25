@@ -2,6 +2,7 @@
 Discord bot implementation with slash commands for Bible verse automation.
 """
 
+import os
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -28,8 +29,17 @@ class BibleBot(commands.Bot):
 
     async def setup_hook(self):
         """Sync commands with Discord."""
+        # Global sync (propagates gradually, up to ~1 h)
         await self.tree.sync()
-        print("Commands synced with Discord")
+        print("Commands synced globally with Discord")
+
+        # Instant guild sync — set DISCORD_GUILD_ID in .env.local to enable
+        guild_id = os.getenv("DISCORD_GUILD_ID")
+        if guild_id:
+            guild = discord.Object(id=int(guild_id))
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            print(f"Commands synced instantly to guild {guild_id}")
 
     async def on_interaction(self, interaction: discord.Interaction):
         """Greet new users with a DM when they first interact with the app."""
@@ -519,22 +529,10 @@ async def chat_command(interaction: discord.Interaction, message: str):
             user_message=message,
         )
 
-        # Truncate if the reply exceeds Discord's embed description limit
-        truncated = reply if len(reply) <= 4096 else reply[:4090] + "\u2026"
+        # Truncate to Discord's plain-message limit (2000 chars)
+        truncated = reply if len(reply) <= 2000 else reply[:1997] + "…"
 
-        embed = discord.Embed(
-            description=truncated,
-            color=discord.Color.blurple(),
-        )
-        embed.set_author(
-            name="Bible Assistant",
-            icon_url="https://cdn.discordapp.com/embed/avatars/0.png",
-        )
-        embed.set_footer(
-            text=f"Replied to: {message[:80]}{'...' if len(message) > 80 else ''}"
-        )
-
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(truncated)
 
     except Exception as e:
         print(f"[chat_command] Error for user {interaction.user.id}: {e}")
