@@ -17,6 +17,7 @@ from .storage import (
     mark_greeted,
 )
 from .scheduler import setup_user_schedule
+from .conversation import ConversationManager
 
 
 class BibleBot(commands.Bot):
@@ -113,6 +114,17 @@ class BibleBot(commands.Bot):
 
 # Create bot instance
 bot = BibleBot()
+
+# Lazily initialised when the first /chat command fires
+_conversation_manager: Optional[ConversationManager] = None
+
+
+def _get_conversation_manager() -> ConversationManager:
+    """Return a shared ConversationManager, creating it on first call."""
+    global _conversation_manager
+    if _conversation_manager is None:
+        _conversation_manager = ConversationManager()
+    return _conversation_manager
 
 
 def validate_time_format(time_str: str) -> bool:
@@ -432,6 +444,135 @@ async def send_daily_verse(user_id: str):
 
     except Exception as e:
         print(f"Error in send_daily_verse for user {user_id}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Owner-only sync commands (prefix-based, work instantly in DMs too)
+# ---------------------------------------------------------------------------
+
+
+@bot.command(name="sync", hidden=True)
+@commands.is_owner()
+async def sync_commands(ctx: commands.Context):
+    """
+    Force a global slash-command sync.
+
+    Global syncs still propagate over Discord's network (up to ~1 h), but
+    re-posting them refreshes Discord's registration. DM the bot ``!sync``
+    to trigger this without needing a server.
+    """
+    await ctx.typing()
+    synced = await bot.tree.sync()
+    await ctx.send(f"✅ Synced **{len(synced)}** global command(s).")
+    print(f"[sync] Owner triggered global sync — {len(synced)} command(s)")
+
+
+@bot.command(name="syncguild", hidden=True)
+@commands.is_owner()
+async def sync_guild_commands(ctx: commands.Context):
+    """
+    Instantly copy and sync all commands to *this* guild.
+
+    Guild-scoped commands appear in Discord within seconds, making this
+    the fastest way to test new slash commands in a server you control.
+    Only works inside a server (not in DMs).
+    """
+    if ctx.guild is None:
+        await ctx.send("⚠️ Run this inside a server, not a DM.")
+        return
+
+    bot.tree.copy_global_to(guild=ctx.guild)
+    synced = await bot.tree.sync(guild=ctx.guild)
+    await ctx.send(
+        f"✅ Synced **{len(synced)}** command(s) to **{ctx.guild.name}** instantly."
+    )
+    print(
+        f"[syncguild] Owner synced {len(synced)} command(s) to guild {ctx.guild.id}"
+    )
+
+
+@sync_commands.error
+@sync_guild_commands.error
+async def sync_error(ctx: commands.Context, error: commands.CommandError):
+    if isinstance(error, commands.NotOwner):
+        await ctx.send("🚫 Only the bot owner can use this command.", delete_after=5)
+
+
+# ---------------------------------------------------------------------------
+# Conversation commands
+# ---------------------------------------------------------------------------
+
+
+@bot.tree.command(
+    name="chat",
+    description="Have a conversation with the Bible assistant powered by Gemini",
+)
+@app_commands.describe(message="Your message or question for the Bible assistant")
+async def chat_command(interaction: discord.Interaction, message: str):
+    """Send a message to the Gemini-powered Bible assistant."""
+    await interaction.response.defer(thinking=True)
+
+    try:
+        manager = _get_conversation_manager()
+        reply = await manager.chat(
+            user_id=str(interaction.user.id),
+            user_message=message,
+        )
+
+        # Truncate if the reply exceeds Discord's embed description limit
+        truncated = reply if len(reply) <= 4096 else reply[:4090] + "\u2026"
+
+        embed = discord.Embed(
+            description=truncated,
+            color=discord.Color.blurple(),
+        )
+        embed.set_author(
+            name="Bible Assistant",
+            icon_url="https://cdn.discordapp.com/embed/avatars/0.png",
+        )
+        embed.set_footer(
+            text=f"Replied to: {message[:80]}{'...' if len(message) > 80 else ''}"
+        )
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        print(f"[chat_command] Error for user {interaction.user.id}: {e}")
+        embed = discord.Embed(
+            title="\u274c Error",
+            description="Something went wrong while processing your message. Please try again.",
+            color=discord.Color.red(),
+        )
+        await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(
+    name="clearchat",
+    description="Reset your conversation history with the Bible assistant",
+)
+async def clearchat_command(interaction: discord.Interaction):
+    """Clear the user's stored conversation history."""
+    try:
+        manager = _get_conversation_manager()
+        manager.reset(user_id=str(interaction.user.id))
+
+        embed = discord.Embed(
+            title="\u2705 Conversation Cleared",
+            description="Your chat history has been reset. Start fresh with a new question!",
+            color=discord.Color.green(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        print(f"[clearchat_command] Error for user {interaction.user.id}: {e}")
+        await interaction.response.send_message(
+            "\u274c Failed to clear history. Please try again.", ephemeral=True
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bot accessor
+# ---------------------------------------------------------------------------
 
 
 def get_bot():
