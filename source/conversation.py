@@ -34,10 +34,10 @@ Usage
     reply = await manager.chat(user_id="123456789", user_message="Hello!")
 """
 
+import asyncio
 import json
 import os
 import ssl
-import time
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
@@ -284,7 +284,7 @@ class ConversationManager:
         for model in models_to_try:
             for attempt in range(1, 4):  # up to 3 attempts per model
                 try:
-                    response = self._client.models.generate_content(
+                    response = await self._client.aio.models.generate_content(
                         model=model,
                         contents=contents,
                         config=config,
@@ -299,7 +299,7 @@ class ConversationManager:
                         f"(attempt {attempt}/3): {e}"
                     )
                     if attempt < 3:
-                        time.sleep(2 * attempt)  # 2s, 4s back-off
+                        await asyncio.sleep(2 * attempt)  # 2s, 4s back-off
                     else:
                         break  # give up on this model, try next
                 except genai_errors.ClientError as e:
